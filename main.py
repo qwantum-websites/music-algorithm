@@ -1,7 +1,6 @@
 import scipy.io as sio
 from numpy import *
 from matplotlib import pyplot as plt 
-from mpl_toolkits.mplot3d import Axes3D
 import matplotlib
 from os import listdir
 from os.path import isfile, join
