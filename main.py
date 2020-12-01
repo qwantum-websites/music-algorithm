@@ -10,9 +10,11 @@ def main():
     
     # Parameters
 
-    test_name = 'Blind'
-    num_samp = 2000
-    p = 2
+    test_name = 'Blind' # tests available: Test1, Test2, Test3, Test4
+    N = 2000 # samples per batch 
+    p = 1 # number of emitting sources
+ 
+    method = 'music' # methods available: beamf, minvar, music
 
     # Data acquisition & calibration
 
@@ -22,12 +24,13 @@ def main():
 
     # Corrected data matrix
 
-    c_d_m  = get_corrected_data_matrix(d_m, c)
+    c_d_m    = get_corrected_data_matrix(d_m, c)
     [m, n] = shape(c_d_m)
-    est_correl_m = zeros(m)
 
-    az_v = zeros(((100,)))
-    el_v = zeros(((100,)))
+    # azimuth, elevations angles
+
+    el_v = zeros((int(n / N),))
+    az_v = zeros((int(n / N),))
 
     span_az = 50
     span_el = 50
@@ -35,7 +38,6 @@ def main():
     it_az = range(-span_az, span_az + 1)
     it_el = range(-span_el, span_el + 1)
     xx, yy = meshgrid(it_az, it_el)
-    z = zeros((2 * span_az + 1, 2 * span_el + 1))
 
     #plot parameters 
 
@@ -47,35 +49,35 @@ def main():
         'pgf.rcfonts': False,
         'legend.fancybox': False,
         'legend.shadow': False,
-        # 'figure.figsize': [3.9, 3.9],
     })
     plt.ion()
     figure, ax = plt.subplots()
 
-    for i in range(100): 
+    for i in range(int(n / N)): 
 
-        est_correl_m = c_d_m[:, i*num_samp:(i+1)*num_samp ] @ matrix.getH(c_d_m[:, i*num_samp:(i+1)*num_samp ]) / num_samp
-        w, v = linalg.eig(est_correl_m)
+        R = c_d_m[:, i*N:(i+1)*N ] @ matrix.getH(c_d_m[:, i*N:(i+1)*N ]) / N # correlation matrix
 
-        # SOURCE https://github.com/vslobody/MUSIC/blob/master/music.py
-        idx = w.argsort()[::-1]
-        w = w[idx]
-        v = v[:, idx]
-        vn = v[:, p:len(v)]
-        # END SOURCE
-    
-        # pseudo spectrum estimation
+        if(method == "beamf"): 
 
-        for az in it_az:
-            for el in it_el: 
-                eh = matrix.getH( steering_vector(az, el, uca) )
-                r = eh @ vn
-                z[ int(el) + span_el, int(az) + span_az] = sum([abs(ri)**2 for ri in r])**-1
+            z = beamf(span_az, span_el, R, uca)            
         
-        ax.contourf(xx, yy, z)
-        plt.title('Pseudo Spectrum Estimation')
+        elif(method == "minvar"):
+
+            z = minvar(span_az, span_el, R, uca)            
+        
+        elif(method == "music"):
+            
+            z = music(span_az, span_el, R, uca, p)            
+
+        else:
+            
+             return -1
+
+        ax.contour(xx, yy, z)
+        plt.title(r'$P(\theta, \phi)$ contour (MUSIC method)')
         ax.set_xlabel("Azimuth $\\theta [^\circ]$")
-        ax.set_ylabel("Elevation $\phi [^\circ]$")
+        plt.ylabel("Elevation $\phi [^\circ]$", labelpad=-5)
+        plt.grid(linestyle='dotted')
         figure.canvas.draw()
         ax.cla()
 
@@ -83,9 +85,7 @@ def main():
     #     az_v[i] = az_v[i] - span_az
     #     el_v[i] = el_v[i] - span_el
     #     print(i)
-    # plot_2D(az_v, el_v)
-
-    # plot_2D(az_v, el_v)
+    # plot_shape_drawing(az_v, el_v, method)
 
 
 ##
@@ -183,9 +183,71 @@ def get_uca_elements_positions():
 
     return uca
 
+##
+#   returns z with music algorithm
+##
+def beamf(span_az, span_el, R, uca):
 
-def plot_2D(x, y ): 
+    it_az = range(-span_az, span_az + 1)
+    it_el = range(-span_el, span_el + 1)
+    z = zeros((2 * span_az + 1, 2 * span_el + 1))
 
+    for az in it_az:
+        for el in it_el: 
+            e = steering_vector(az, el, uca)
+            eh = matrix.getH( e )
+            z[ el + span_el, az + span_az] = abs((eh @ R @ e)[0, 0]) / abs((eh @ e)[0, 0])
+
+    return z
+
+
+##
+#   returns z with music algorithm
+##
+def minvar(span_az, span_el, R, uca):
+
+    it_az = range(-span_az, span_az + 1)
+    it_el = range(-span_el, span_el + 1)
+    z = zeros((2 * span_az + 1, 2 * span_el + 1))
+
+    R_i = linalg.inv(R) 
+
+    for az in it_az:
+        for el in it_el: 
+            e = steering_vector(az, el, uca)
+            eh = matrix.getH( e )
+            z[ el + span_el, az + span_az] = abs((eh @ R_i @ e)[0, 0])**-1
+    return z
+
+
+##
+#   returns z with music algorithm
+##
+def music(span_az, span_el, R, uca, p):
+
+    it_az = range(-span_az, span_az + 1)
+    it_el = range(-span_el, span_el + 1)
+    z = zeros((2 * span_az + 1, 2 * span_el + 1))
+
+    w, v = linalg.eig(R)
+    # SOURCE https://github.com/vslobody/MUSIC/blob/master/music.py
+    idx = w.argsort()[::-1]
+    w = w[idx]
+    v = v[:, idx]
+    vn = v[:, p:len(v)]
+    # END SOURCE
+
+    for az in it_az:
+        for el in it_el: 
+            eh = matrix.getH( steering_vector(az, el, uca) )
+            r = eh @ vn
+            z[ el + span_el, az + span_az] = sum([abs(ri)**2 for ri in r])**-1
+    
+    return z
+
+
+def plot_shape_drawing(x, y, method): 
+    
     matplotlib.rcParams.update({
         "pgf.texsystem": "pdflatex",
         'font.family': 'serif',
@@ -194,48 +256,18 @@ def plot_2D(x, y ):
         'pgf.rcfonts': False,
         'legend.fancybox': False,
         'legend.shadow': False,
-        # 'figure.figsize': [3.9, 3.9],
+        'figure.figsize': [3.9, 3.9],
     })
 
     fig = plt.figure('Pseudo Spectrum Estimation')
-
-    # fig.tight_layout()
-
-    # plt.plot([x for x in range(num_samp)], az, '-k')
-    plt.plot(x, y)
-    plt.title(r'Pseudo Spectrum Estimation')
-    plt.xlabel('$\\theta \ [^\circ]$')
-    plt.ylabel('$\phi \ [^\circ]$')
-    # plt.savefig('couple-vitesse.pgf')
+    plt.plot(x, y, 'k')
+    plt.title(r'$P(\theta, \phi)$')
+    plt.title('Estimated drawing shape (MUSIC method)')
+    plt.xlabel('Azimuth $\\theta \ [^\circ]$')
+    plt.ylabel("Elevation $\phi [^\circ]$", labelpad=-5)
+    plt.grid(linestyle='dotted')
 
     plt.show()
-
-
-def plot_3D(x, y, z): 
-
-    matplotlib.rcParams.update({
-        "pgf.texsystem": "pdflatex",
-        'font.family': 'serif',
-        'toolbar': 'None',
-        'text.usetex': True,
-        'pgf.rcfonts': False,
-        'legend.fancybox': False,
-        'legend.shadow': False,
-        # 'figure.figsize': [3.9, 3.9],
-    })
-
-    fig = plt.figure('Pseudo Spectrum Estimation')
-
-    # fig.tight_layout()
-    plt.contourf(x, y, z, 6)
-    # plt.plot([x for x in range(num_samp)], az, '-k')
-    plt.title(r'Pseudo Spectrum Estimation')
-    plt.xlabel('$\\theta \ [rad]$')
-    plt.ylabel('$\phi \ [rad]$')
-    # plt.savefig('couple-vitesse.pgf')
-
-    plt.show()
-
 
 if __name__ == "__main__":
     main()
